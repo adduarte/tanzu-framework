@@ -71,6 +71,11 @@ type ClusterBootstrapReconciler struct {
 	liveClient  client.Client
 }
 
+const (
+	clusterDeleteTimeout       = time.Second * 10
+	AdditionalPackageFinalizer = "AdditionalPackageDelete"
+)
+
 // NewClusterBootstrapReconciler returns a reconciler for ClusterBootstrap
 func NewClusterBootstrapReconciler(c client.Client, log logr.Logger, scheme *runtime.Scheme, config *addonconfig.ClusterBootstrapControllerConfig) *ClusterBootstrapReconciler {
 	return &ClusterBootstrapReconciler{
@@ -169,7 +174,7 @@ func (r *ClusterBootstrapReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if !cluster.GetDeletionTimestamp().IsZero() {
 		// TODO handle delete
 		// https://github.com/vmware-tanzu/tanzu-framework/issues/1591
-		return ctrl.Result{}, nil
+		return r.reconcileDelete(cluster, log)
 	}
 	return r.reconcileNormal(cluster, log)
 }
@@ -244,6 +249,8 @@ func (r *ClusterBootstrapReconciler) reconcileNormal(cluster *clusterapiv1beta1.
 			// Logging has been handled in createOrPatchAddonResourcesOnRemote()
 			return ctrl.Result{Requeue: true}, err
 		}
+		//If at least one additional package is installed, the clusterboostrap gets marked up with the finalizer
+		AddFinalizer(clusterBootstrap, AdditionalPackageFinalizer)
 		// set watches on provider objects in additional packages if not already set
 		if additionalPkg.ValuesFrom != nil && additionalPkg.ValuesFrom.ProviderRef != nil {
 			if err := r.watchProvider(additionalPkg.ValuesFrom.ProviderRef, clusterBootstrap.Namespace, log); err != nil {
@@ -1253,6 +1260,65 @@ func (r *ClusterBootstrapReconciler) reconcileClusterProxyAndNetworkSettings(clu
 	if err := patchHelper.Patch(r.context, cluster); err != nil {
 		log.Error(err, "unable to patch Cluster Annotation")
 		return err
+	}
+
+	return nil
+}
+
+func (r *ClusterBootstrapReconciler) reconcileDelete(ctx context.Context, cluster *clusterapiv1beta1.Cluster, log logr.Logger) (ctrl.Result, error) {
+
+	remoteClient, err := util.GetClusterClient(r.context, r.Client, r.Scheme, clusterapiutil.ObjectKey(cluster))
+	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
+	err = remoteClient.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if clusterBootstrap == nil {
+		return ctrl.Result{}, nil
+	}
+
+	err = r.removeAdditionalPackageInstalls(cluster)
+	if err != nil {
+		return ctrl.Result{}, err //TODO (adduarte) what do we do with error?
+	}
+
+	if hasAdditionalPackageInstalls(cluster) || !timeoutOccured(cluster) {
+		return ctrl.Result{RequeueAfter: clusterDeleteTimeout}, nil
+	}
+
+	err := r.removeClonedObjects(cluster)
+
+	RemoveFinalizer(clusterBootstrap, AdditionalPackageFinalizer) // add to clusterbootstrap. and use owner references to cluster
+	return ctrl.Result{}, nil
+}
+func (r *ClusterBootstrapReconciler) removeBoostrapResources(ctx context.Context, cluster *clusterapiv1beta1.Cluster, log logr.Logger) (error) {
+	// Removes all additional package install CRs from the cluster
+	remoteClient, err := util.GetClusterClient(r.context, r.Client, r.Scheme, clusterapiutil.ObjectKey(cluster))
+	if err != nil {
+		return err
+	}
+	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
+	err = remoteClient.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
+
+	// now that we have boostrap, we start removing its resources (everything that was added in boobstrap  reconcileNormal
+	return nil
+}
+func (r *ClusterBootstrapReconciler) removeAdditionalPackageInstalls(cluster *clusterapiv1beta1.Cluster) error {
+	// Removes all additional package install CRs from the cluster
+	remoteClient, err := util.GetClusterClient(r.context, r.Client, r.Scheme, clusterapiutil.ObjectKey(cluster))
+	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
+	err = remoteClient.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
+	if err != nil {
+		return err
+	}
+	if clusterBootstrap == nil {
+		return nil
+	}
+	for _, additionalPkg := range clusterBootstrap.Spec.AdditionalPackages {
+		//TODO (adduarte)
+		//Remove adiitional package install
+		//If at least one additional package is installed, the clusterboostrap gets marked up with the finalizer
+		log.Info("Removing ", additionalPkg.RefName)
 	}
 
 	return nil
