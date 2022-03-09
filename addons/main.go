@@ -83,6 +83,7 @@ type addonFlags struct {
 	proxyCACertClusterVarName   string
 	ipFamilyClusterVarName      string
 	featureGateClusterBootstrap bool
+	//TODO (adduarrte) add timeout for clusterboostrapdelete timeout.
 }
 
 func parseAddonFlags(addonFlags *addonFlags) {

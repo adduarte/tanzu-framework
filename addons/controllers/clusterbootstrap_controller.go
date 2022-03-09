@@ -69,6 +69,12 @@ type ClusterBootstrapReconciler struct {
 	liveClient  client.Client
 }
 
+const (
+	clusterDeleteTimeout       = time.Second * 10
+	requeTime                  = time.Second * 60          //  TODO: (adduarte) need to use the correc value here from other packages. Follow precedence
+	AdditionalPackageFinalizer = "AdditionalPackageDelete" // TODO (adduarte) need to use the correct string for this.
+)
+
 // NewClusterBootstrapReconciler returns a reconciler for ClusterBootstrap
 func NewClusterBootstrapReconciler(c client.Client, log logr.Logger, scheme *runtime.Scheme, config *addonconfig.ClusterBootstrapControllerConfig) *ClusterBootstrapReconciler {
 	return &ClusterBootstrapReconciler{
@@ -167,7 +173,7 @@ func (r *ClusterBootstrapReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if !cluster.GetDeletionTimestamp().IsZero() {
 		// TODO handle delete
 		// https://github.com/vmware-tanzu/tanzu-framework/issues/1591
-		return ctrl.Result{}, nil
+		return r.reconcileDelete(cluster, log)
 	}
 	return r.reconcileNormal(cluster, log)
 }
@@ -241,6 +247,8 @@ func (r *ClusterBootstrapReconciler) reconcileNormal(cluster *clusterapiv1beta1.
 			// Logging has been handled in createOrPatchAddonResourcesOnRemote()
 			return ctrl.Result{Requeue: true}, err
 		}
+		//If at least one additional package is installed, the clusterboostrap gets marked up with the finalizer
+		AddFinalizer(clusterBootstrap, AdditionalPackageFinalizer) //TODO (adduarte) replace with a function from cluster api
 		// set watches on provider objects in additional packages if not already set
 		if additionalPkg.ValuesFrom != nil && additionalPkg.ValuesFrom.ProviderRef != nil {
 			if err := r.watchProvider(additionalPkg.ValuesFrom.ProviderRef, clusterBootstrap.Namespace, log); err != nil {
@@ -535,6 +543,7 @@ func (r *ClusterBootstrapReconciler) createOrPatchKappPackageInstall(clusterBoot
 		//	 ipkg.ObjectMeta.Annotations = make(map[string]string)
 		// }
 		// ipkg.ObjectMeta.Annotations[addontypes.YttMarkerAnnotation] = ""
+		pkgi.Spec.NoopDelete = true
 		pkgi.Spec.SyncPeriod = &metav1.Duration{Duration: r.Config.PkgiSyncPeriod}
 		pkgi.Spec.PackageRef = &kapppkgiv1alpha1.PackageRef{
 			// clusterBootstrap.Spec.Kapp.RefName is Package.Name. I.e., kapp-controller.tanzu.vmware.com.0.28.0+vmware.1-tkg.1-rc.1
@@ -1094,7 +1103,7 @@ func (r *ClusterBootstrapReconciler) updateValuesFromSecret(cluster *clusterapiv
 
 		var createOrPatchErr error
 		_, createOrPatchErr = controllerutil.CreateOrPatch(r.context, r.Client, newSecret, func() error {
-			newSecret.OwnerReferences = []metav1.OwnerReference{
+			newSecret.OwnerReferences = []metav1.OwnerReference{ //TODO (adduarte) does this not set the owner reference?
 				{
 					APIVersion: clusterapiv1beta1.GroupVersion.String(),
 					Kind:       cluster.Kind,
@@ -1359,5 +1368,82 @@ func (r *ClusterBootstrapReconciler) reconcileClusterProxyAndNetworkSettings(clu
 		return err
 	}
 
+	return nil
+}
+
+func (r *ClusterBootstrapReconciler) reconcileDelete(cluster *clusterapiv1beta1.Cluster, log logr.Logger) (ctrl.Result, error) {
+
+	remoteClient, err := util.GetClusterClient(r.context, r.Client, r.Scheme, clusterapiutil.ObjectKey(cluster))
+	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
+	err = remoteClient.Get(r.context, client.ObjectKeyFromObject(cluster), clusterBootstrap)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if clusterBootstrap == nil {
+		return ctrl.Result{}, nil
+	}
+
+	err = r.removeAdditionalPackageInstalls(cluster, log)
+	if err != nil {
+		return ctrl.Result{}, err //TODO (adduarte) what do we do with error?
+	}
+
+	if hasAdditionalPackageInstalls(cluster) || time.Now().After(cluster.GetDeletionTimestamp().Add(clusterDeleteTimeout)) {
+		return ctrl.Result{RequeueAfter: requeTime}, nil
+	}
+
+	RemoveFinalizer(clusterBootstrap, AdditionalPackageFinalizer) // add to clusterbootstrap. and use owner references to cluster
+	return ctrl.Result{}, nil
+}
+
+func (r *ClusterBootstrapReconciler) removeAdditionalPackageInstalls(cluster *clusterapiv1beta1.Cluster, log logr.Logger) error {
+	// Removes all additional package install CRs from the cluster
+	remoteClient, err := util.GetClusterClient(r.context, r.Client, r.Scheme, clusterapiutil.ObjectKey(cluster))
+	if err != nil {
+		log.Error(err, "error getting remote cluster client")
+		return err
+	}
+	// the list of packages is in the clusterBoostrap.spec
+	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
+	err = remoteClient.Get(r.context, client.ObjectKeyFromObject(cluster), clusterBootstrap)
+	if err != nil {
+		log.Error(err, fmt.Sprintf("could not obtain cluster boostrap for clsuter %s/%s", cluster.Namespace, cluster.Name))
+		return err //TODO (adduarte) what is the correct behavior if an error occurs on getting the boostrap. Do we need to log this?
+	}
+	if clusterBootstrap == nil {
+		return nil
+	}
+	for _, additionalPkg := range clusterBootstrap.Spec.AdditionalPackages {
+		remotePackageRefName, remotePackageVersion, err := util.GetPackageMetadata(r.context, remoteClient, additionalPkg.RefName, r.Config.SystemNamespace)
+		if remotePackageRefName == "" || remotePackageVersion == "" || err != nil { //TODO (adduarte) do we need this check?
+			// Package.Spec.RefName and Package.Spec.Version are required fields for Package CR. We do not expect them to be
+			// empty and error should not happen when fetching them from a Package CR.
+			log.Error(err, fmt.Sprintf("unable to fetch Package.Spec.RefName or Package.Spec.Version from Package %s/%s on cluster %s/%s",
+				r.Config.SystemNamespace, additionalPkg.RefName, cluster.Namespace, cluster.Name))
+		}
+
+		additionalPkgInstall := &kapppkgiv1alpha1.PackageInstall{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      util.GeneratePackageInstallName(cluster.Name, remotePackageRefName),
+				Namespace: r.Config.SystemNamespace,
+			},
+		}
+		key := client.ObjectKey{Namespace: additionalPkgInstall.Namespace, Name: additionalPkgInstall.Name}
+		err = remoteClient.Get(r.context, key, additionalPkgInstall)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+		if apierrors.IsNotFound(err) {
+			break
+		}
+		// the only way we get here is if err == nil, which means package install exists.
+		// lets delete it.
+		err = remoteClient.Delete(r.context, additionalPkgInstall)
+		if err != nil && !apierrors.IsNotFound(err) {
+			log.Error(err, fmt.Sprintf("unable to delete package install CR for Package %s/%s on cluster %s/%s",
+				additionalPkgInstall.Namespace, additionalPkg.RefName, cluster.Namespace, cluster.Name))
+		}
+
+	}
 	return nil
 }
