@@ -42,11 +42,10 @@ func (r *MachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-//returs a list of reoncile requests each machine in the cluster whih owns the clusterboostrap
-func machinesInClusterBootstrap(c client.Client, log logr.Logger) handler.MapFunc {
+// returns a list of reconcile requests for each machine in the cluster that owns the clusterboostrap
+func machinesInClusterBootstrap(ctx context.Context, ctrlClient client.Client, log logr.Logger) handler.MapFunc {
 	return func(o client.Object) []reconcile.Request {
 
-		ctx := context.Background()
 		clusterBoostrap, ok := o.(*runtanzuv1alpha3.ClusterBootstrap)
 		if !ok {
 			log.Error(errors.New("invalid type"),
@@ -55,18 +54,18 @@ func machinesInClusterBootstrap(c client.Client, log logr.Logger) handler.MapFun
 			return nil
 		}
 
+		// take advantage that cluster.Name = clusterBoostrap.Name to get list of machines
+		var machines clusterv1.MachineList
 		listOptions := []client.ListOption{
 			client.InNamespace(clusterBoostrap.Namespace),
-			client.MatchingLabels(map[string]string{clusterv1.ClusterLabelName: clusterBoostrap.Name}), // we take advantage of the fact that clusterBoostrap name = couster name
+			client.MatchingLabels(map[string]string{clusterv1.ClusterLabelName: clusterBoostrap.Name}),
 		}
-
-		var machines clusterv1.MachineList
-		if err := c.List(ctx, &machines, listOptions...); err != nil {
+		if err := ctrlClient.List(ctx, &machines, listOptions...); err != nil {
 			return []reconcile.Request{}
 		}
 
 		// Create a reconcile request for each machine resource.
-		requests := []ctrl.Request{}
+		var requests []ctrl.Request
 		for _, machine := range machines.Items {
 			requests = append(requests, ctrl.Request{
 				NamespacedName: types.NamespacedName{
@@ -75,35 +74,34 @@ func machinesInClusterBootstrap(c client.Client, log logr.Logger) handler.MapFun
 				},
 			})
 		}
-		log.Info("Generating requests", "requests", requests)
-		// Return reconcile requests for the Machine resources.
+		log.Info("Generating requests", "requests", requests) //TODO (adduarte): do we really need this?
+		// Return list of reconcile requests for the Machine resources.
 		return requests
 	}
 }
 
-//main reconcile function.
 func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	log := r.Log.WithValues("Machine", req.NamespacedName)
 
 	res := ctrl.Result{}
-	// Get the resource for this request.
-	obj := &clusterv1.Machine{}
-	if err := r.Client.Get(ctx, req.NamespacedName, obj); err != nil {
+	// Get machine for request
+	machine := &clusterv1.Machine{}
+	if err := r.Client.Get(ctx, req.NamespacedName, machine); err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Info("Machine not found, will not reconcile")
+			log.Info("Machine %s not found in namespace %s, will not reconcile", machine.Name, req.Namespace)
 			return reconcile.Result{}, nil
 		}
 		return reconcile.Result{}, err
 	}
 
 	// Always Patch when exiting this function so changes to the resource are updated on the API server.
-	patchHelper, err := patch.NewHelper(obj, r.Client)
+	patchHelper, err := patch.NewHelper(machine, r.Client)
 	if err != nil {
 		return reconcile.Result{}, errors.Wrapf(err, "failed to init patch helper for %s %s",
-			obj.GroupVersionKind(), req.NamespacedName)
+			machine.GroupVersionKind(), req.NamespacedName)
 	}
 	defer func() {
-		if err := patchHelper.Patch(ctx, obj); err != nil {
+		if err := patchHelper.Patch(ctx, machine); err != nil {
 			if reterr == nil {
 				reterr = err
 			}
@@ -112,73 +110,53 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 	}()
 
 	// Get the name of the cluster to which the current machine belongs
-	clusterName := obj.Spec.ClusterName
+	clusterName := machine.Spec.ClusterName
 	if clusterName == "" {
 		log.Info("machine doesn't have cluster name label, skip reconciling")
 		return res, nil
 	}
 
-	cluster := &clusterv1.Cluster{}
-	if err := r.Client.Get(ctx, client.ObjectKey{
-		Namespace: obj.Namespace,
-		Name:      clusterName,
-	}, cluster); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return res, err
-		}
-		return res, nil
-	}
-
-	//get the clusterboostrap of the cluster ther machine belongs to
-	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
-	err = r.Client.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
-	if err != nil {
-		// need to think through the case of clusterbootstrap not being present
-		log.Error(err, "failed to get cluster bootstrap from cluster")
+	clusterBootstrap, err := GetMachineClusterBoostrap(ctx, machine, r.Client)
+	if err != nil || clusterBootstrap == nil { //TODO (adduarte) need to think through the case of clusterbootstrap not being present
+		log.Error(err, "failed to get cluster bootstrap for machine %s", machine.Name)
 		return ctrl.Result{}, err
 	}
 
 	// Removes the pre-terminate hook when machine is being deleted directly and it's parent clusterBoostrap  is not.
-	if !obj.GetDeletionTimestamp().IsZero() && clusterBoostrap.GetDeletionTimestamp().IsZero() {
-		delete(obj.Annotations, PreTerminateAnnotation)
+	if !machine.GetDeletionTimestamp().IsZero() && clusterBootstrap.GetDeletionTimestamp().IsZero() {
+		delete(machine.Annotations, PreTerminateAnnotation)
 		log.Info("Machine is being deleted though its parent Cluster is not, removing pre-terminate hook")
 		return res, nil
 	}
 
 	// Handle clusterboostrap delete.
-	if !cluster.GetDeletionTimestamp().IsZero() {
-		res, err := r.reconcileMachineDeletionHook(ctx, log, obj, cluster)
+	if !clusterBootstrap.GetDeletionTimestamp().IsZero() {
+		res, err := r.reconcileMachineDeletionHook(ctx, log, machine, clusterBootstrap)
 		if err != nil {
-			log.Error(err, "failed to reconcile Machine deletion")
+			log.Error(err, "failed to reconcile clusterboostrap deletion")
 			return res, err
 		}
 		return res, nil
 	}
 
 	// Handle cluster create/update
-	return r.reconcileNormal(ctx, log, obj, cluster)
+	return r.reconcileNormal(ctx, log, machine, clusterBootstrap)
 }
 
 // reconcileNormal adds the pre-terminate machine deletion phase hook to the Machine
-func (r *MachineReconciler) reconcileNormal(ctx context.Context, log logr.Logger, obj *clusterv1.Machine, cluster *clusterv1.Cluster) (ctrl.Result, error) {
+func (r *MachineReconciler) reconcileNormal(ctx context.Context, log logr.Logger, machine *clusterv1.Machine,
+	clusterBootstrap *runtanzuv1alpha3.ClusterBootstrap) (ctrl.Result, error) {
 	log.Info("Start reconciling")
-
-	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
-	err := r.Client.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
-	if err != nil {
-		log.Error(err, "failed to get cluster bootstrap from cluster")
-		return ctrl.Result{}, err
-	}
 
 	if ContainsFinalizer(clusterBootstrap, AdditionalPackageFinalizer) {
 		// Add pre-terminate machine deletion phase hook if it doesn't exist
 
-		if _, exist := obj.Annotations[clusterv1.PreTerminateDeleteHookAnnotationPrefix]; !exist {
-			if obj.Annotations == nil {
-				obj.Annotations = make(map[string]string)
+		if _, exist := machine.Annotations[clusterv1.PreTerminateDeleteHookAnnotationPrefix]; !exist {
+			if machine.Annotations == nil {
+				machine.Annotations = make(map[string]string)
 			}
 
-			obj.Annotations[PreTerminateAnnotation] = "additional-package-installs"
+			machine.Annotations[PreTerminateAnnotation] = "additional-package-installs"
 		}
 	}
 
