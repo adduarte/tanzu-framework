@@ -28,7 +28,9 @@ type MachineReconciler struct {
 const PreTerminateAnnotation = clusterv1.PreTerminateDeleteHookAnnotationPrefix + "/addons"
 
 // SetupWithManager adds this reconciler to a new controller then to the
-// provided manager.
+// provided manager. Main object to watch/manage is the clusterv1.Machine, but it also
+// watches clusterbootstraps, and splits the clusterboostrap request into a request
+// for each of the machines that are part of the cluster that owns the clusterboostrap.
 func (r *MachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		// We need to watch for clusterboostrap
@@ -40,6 +42,7 @@ func (r *MachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+//returs a list of reoncile requests each machine in the cluster whih owns the clusterboostrap
 func machinesInClusterBootstrap(c client.Client, log logr.Logger) handler.MapFunc {
 	return func(o client.Object) []reconcile.Request {
 
@@ -78,6 +81,7 @@ func machinesInClusterBootstrap(c client.Client, log logr.Logger) handler.MapFun
 	}
 }
 
+//main reconcile function.
 func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, reterr error) {
 	log := r.Log.WithValues("Machine", req.NamespacedName)
 
@@ -125,6 +129,7 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 		return res, nil
 	}
 
+	//get the clusterboostrap of the cluster ther machine belongs to
 	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
 	err = r.Client.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
 	if err != nil {
@@ -133,14 +138,14 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ 
 		return ctrl.Result{}, err
 	}
 
-	// Removes the pre-terminate hook when machine is being deleted directly and it's parent cluster is not.
-	if !obj.GetDeletionTimestamp().IsZero() && cluster.GetDeletionTimestamp().IsZero() {
+	// Removes the pre-terminate hook when machine is being deleted directly and it's parent clusterBoostrap  is not.
+	if !obj.GetDeletionTimestamp().IsZero() && clusterBoostrap.GetDeletionTimestamp().IsZero() {
 		delete(obj.Annotations, PreTerminateAnnotation)
 		log.Info("Machine is being deleted though its parent Cluster is not, removing pre-terminate hook")
 		return res, nil
 	}
 
-	// Handle cluster delete.
+	// Handle clusterboostrap delete.
 	if !cluster.GetDeletionTimestamp().IsZero() {
 		res, err := r.reconcileMachineDeletionHook(ctx, log, obj, cluster)
 		if err != nil {

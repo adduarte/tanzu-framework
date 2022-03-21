@@ -3,7 +3,10 @@ package controllers
 // Check to see what we have in cluster api
 import (
 	"context"
+	"fmt"
 	runtanzuv1alpha3 "github.com/vmware-tanzu/tanzu-framework/apis/run/v1alpha3"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	clusterapiv1beta1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -42,7 +45,7 @@ func ContainsFinalizer(o client.Object, finalizer string) bool {
 	return false
 }
 
-func GetClusterBoostrap(ctx context.Context, cluster *clusterapiv1beta1.Cluster, ctrlClient client.Client) (*runtanzuv1alpha3.ClusterBootstrap, error) {
+func GetClusterBoostrap(ctx context.Context, cluster *clusterv1.Cluster, ctrlClient client.Client) (*runtanzuv1alpha3.ClusterBootstrap, error) {
 	clusterBootstrap := &runtanzuv1alpha3.ClusterBootstrap{}
 	err := ctrlClient.Get(ctx, client.ObjectKeyFromObject(cluster), clusterBootstrap)
 	if err != nil {
@@ -52,6 +55,27 @@ func GetClusterBoostrap(ctx context.Context, cluster *clusterapiv1beta1.Cluster,
 	return clusterBootstrap, nil
 }
 
+func GetMachineClusterBoostrap(ctx context.Context, machine *clusterv1.Machine, ctrlClient client.Client) (*runtanzuv1alpha3.ClusterBootstrap, error) {
+	// Get the name of the cluster to which the current machine belongs
+	clusterName := machine.Spec.ClusterName
+	if clusterName == "" {
+		return nil, fmt.Errorf("machine spec does not contain a cluster name")
+	}
+
+	cluster := &clusterv1.Cluster{}
+	if err := ctrlClient.Get(ctx, client.ObjectKey{
+		Namespace: machine.Namespace,
+		Name:      clusterName,
+	}, cluster); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, err
+		}
+		return nil, nil
+	}
+
+	//TODO (adduarte): need to think through the case of clusterbootstrap not being present
+	return GetClusterBoostrap(ctx, cluster, ctrlClient)
+}
 func hasAdditionalPackageInstalls(cluster *clusterapiv1beta1.Cluster) bool {
 	//checks  if cluster has additionalPackage installs.
 	return true
