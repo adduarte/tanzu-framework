@@ -164,6 +164,11 @@ func (r *ClusterBootstrapReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		return ctrl.Result{}, err
 	}
 
+	if _, labelFound := tkr.Labels[constants.TKRLableLegacyClusters]; labelFound {
+		log.Info("Skipping reconciling due to tkr label", "name", tkrName, "label", constants.TKRLableLegacyClusters)
+		return ctrl.Result{}, nil
+	}
+
 	// if tkr is not found, should not requeue for the reconciliation
 	if tkr == nil {
 		log.Info("TKR object not found", "name", tkrName)
