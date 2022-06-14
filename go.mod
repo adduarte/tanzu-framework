@@ -68,8 +68,8 @@ require (
 	github.com/mattn/go-isatty v0.0.14
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/onsi/ginkgo v1.16.5
-	github.com/onsi/ginkgo/v2 v2.0.0
-	github.com/onsi/gomega v1.18.1
+	github.com/onsi/ginkgo/v2 v2.1.3
+	github.com/onsi/gomega v1.19.0
 	github.com/otiai10/copy v1.4.2
 	github.com/pelletier/go-toml/v2 v2.0.0-beta.6
 	github.com/pkg/errors v0.9.1
