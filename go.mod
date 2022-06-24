@@ -14,7 +14,7 @@ retract [v1.4.0-pre-alpha-1, v1.4.0-pre-alpha-2]
 require (
 	cloud.google.com/go/storage v1.18.2
 	github.com/AlecAivazis/survey/v2 v2.1.1
-	github.com/Azure/azure-sdk-for-go v58.1.0+incompatible
+	github.com/Azure/azure-sdk-for-go v66.0.0+incompatible
 	github.com/Azure/go-autorest/autorest v0.11.23
 	github.com/Azure/go-autorest/autorest/azure/auth v0.5.10
 	github.com/Jeffail/gabs v1.4.0
