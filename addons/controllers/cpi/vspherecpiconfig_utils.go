@@ -51,7 +51,6 @@ func (r *VSphereCPIConfigReconciler) ClusterToVSphereCPIConfig(o client.Object) 
 	for i := 0; i < len(cs.Items); i++ {
 		config := &cs.Items[i]
 		if config.Namespace == cluster.Namespace {
-
 			// avoid enqueuing reconcile requests for template vSphereCPIConfig CRs in event handler of Cluster CR
 			if _, ok := config.Annotations[constants.TKGAnnotationTemplateConfig]; ok && config.Namespace == r.Config.SystemNamespace {
 				continue

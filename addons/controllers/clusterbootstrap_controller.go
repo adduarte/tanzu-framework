@@ -335,7 +335,6 @@ func (r *ClusterBootstrapReconciler) addFinalizersToClusterResources(cluster *cl
 func (r *ClusterBootstrapReconciler) addFinalizer(o client.Object, deepCopy client.Object) error {
 	controllerutil.AddFinalizer(deepCopy, addontypes.AddonFinalizer)
 	return r.Client.Patch(r.context, deepCopy, client.MergeFrom(o))
-
 }
 
 // handleClusterUnpause unpauses the cluster if the cluster pause annotation is set by cluster pause webhook (cluster has "tkg.tanzu.vmware.com/paused" annotation)
@@ -1452,7 +1451,6 @@ func (r *ClusterBootstrapReconciler) removeFinalizer(o client.Object, deepCopy c
 		return r.Client.Patch(r.context, deepCopy, client.MergeFrom(o))
 	}
 	return nil
-
 }
 
 func hasPackageInstalls(ctx context.Context, remoteClient client.Client,

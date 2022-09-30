@@ -167,7 +167,6 @@ func (r *PackageInstallStatusReconciler) Reconcile(_ context.Context, req reconc
 		if err := r.reconcile(r.Client, cluster, clusterRole, log); err != nil {
 			return ctrl.Result{}, err
 		}
-
 	} else {
 		// the cluster is a remote workload cluster
 		clusterRole = clusterRoleWorkload
