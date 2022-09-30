@@ -38,8 +38,6 @@ import (
 	runtanzuv1alpha3 "github.com/vmware-tanzu/tanzu-framework/apis/run/v1alpha3"
 )
 
-const kappCtrlPkgPrefix = "kapp-controller"
-
 type ClusterRole int
 
 const (

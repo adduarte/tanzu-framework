@@ -434,11 +434,6 @@ func getUsernameAndPasswordFromSecret(s *v1.Secret) (string, string, error) {
 	return string(username), string(password), nil
 }
 
-// controlPlaneName returns the control plane name for a cluster name
-func controlPlaneName(clusterName string) string {
-	return fmt.Sprintf("%s-control-plane", clusterName)
-}
-
 // getCCMName returns the name of cloud control manager for a cluster
 func getCCMName(cluster *capvvmwarev1beta1.VSphereCluster) string {
 	return fmt.Sprintf("%s-%s", cluster.Name, "ccm")
