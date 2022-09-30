@@ -28,7 +28,6 @@ import (
 	cutil "github.com/vmware-tanzu/tanzu-framework/addons/controllers/utils"
 	"github.com/vmware-tanzu/tanzu-framework/addons/pkg/constants"
 	pkgtypes "github.com/vmware-tanzu/tanzu-framework/addons/pkg/types"
-	"github.com/vmware-tanzu/tanzu-framework/addons/pkg/util"
 	cpiv1alpha1 "github.com/vmware-tanzu/tanzu-framework/apis/addonconfigs/cpi/v1alpha1"
 )
 
@@ -447,22 +446,3 @@ func tryParseString(src string, sub *string) string {
 	return src
 }
 
-// tryParseClusterVariableBool tries to parse a boolean cluster variable,
-// info any error that occurs
-func (r *VSphereCPIConfigReconciler) tryParseClusterVariableBool(cluster *clusterapiv1beta1.Cluster, variableName string) bool {
-	res, err := util.ParseClusterVariableBool(cluster, variableName)
-	if err != nil {
-		r.Log.Info(fmt.Sprintf("Cannot parse cluster variable with key %s", variableName))
-	}
-	return res
-}
-
-// tryParseClusterVariableString tries to parse a string cluster variable,
-// info any error that occurs
-func (r *VSphereCPIConfigReconciler) tryParseClusterVariableString(cluster *clusterapiv1beta1.Cluster, variableName string) string {
-	res, err := util.ParseClusterVariableString(cluster, variableName)
-	if err != nil {
-		r.Log.Info(fmt.Sprintf("cannot parse cluster variable with key %s", variableName))
-	}
-	return res
-}
