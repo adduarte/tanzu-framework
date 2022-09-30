@@ -287,7 +287,7 @@ func addMissingFields(copyFrom, destination, keysToSkip map[string]interface{}) 
 
 // removeFields deletes the map entries by comparing the keys with keysToRemove
 func removeFields(m, keysToRemove map[string]interface{}) error {
-	if keysToRemove == nil || len(keysToRemove) == 0 {
+	if len(keysToRemove) == 0 {
 		return nil
 	}
 	for key, value := range m {
