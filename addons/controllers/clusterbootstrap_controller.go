@@ -332,7 +332,7 @@ func (r *ClusterBootstrapReconciler) addFinalizersToClusterResources(cluster *cl
 	return nil
 }
 
-func (r *ClusterBootstrapReconciler) addFinalizer(o client.Object, deepCopy client.Object) error {
+func (r *ClusterBootstrapReconciler) addFinalizer(o, deepCopy client.Object) error {
 	controllerutil.AddFinalizer(deepCopy, addontypes.AddonFinalizer)
 	return r.Client.Patch(r.context, deepCopy, client.MergeFrom(o))
 }
@@ -1445,7 +1445,7 @@ func (r *ClusterBootstrapReconciler) reconcileDelete(cluster *clusterapiv1beta1.
 	return ctrl.Result{}, nil
 }
 
-func (r *ClusterBootstrapReconciler) removeFinalizer(o client.Object, deepCopy client.Object) error {
+func (r *ClusterBootstrapReconciler) removeFinalizer(o, deepCopy client.Object) error {
 	if controllerutil.ContainsFinalizer(deepCopy, addontypes.AddonFinalizer) {
 		controllerutil.RemoveFinalizer(deepCopy, addontypes.AddonFinalizer)
 		return r.Client.Patch(r.context, deepCopy, client.MergeFrom(o))
