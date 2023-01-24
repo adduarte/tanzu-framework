@@ -14,7 +14,7 @@ below are only examples and should be modified for your development environment
 
     # build version. Of the form "dev.x" where x is a number that should be incremented for every build
     #to assure the image will be updated on cluster
-    export VERSION=dev.41
+    export VERSION=dev.1
 
     # url of oci registry where images will be pushed to.  You should replace this with an accessible registry url.
     export OCI_REGISTRY=${DEV_REGISTRY}/$(whoami)
@@ -26,7 +26,7 @@ below are only examples and should be modified for your development environment
 
 
     # package version. Should use value appropriate for your development environment
-    export PACKAGE_VERSION=v1.0.0
+    export PACKAGE_VERSION=v2.0.0
 
     # full oci image name
     export IMG=${OCI_REGISTRY}/${OCI_IMAGE_NAME}:${PACKAGE_VERSION}-${VERSION}
@@ -64,8 +64,6 @@ from anywhere in the repo directory structure
     #(optional) verify the image was pushed
     docker pull $IMG
 
-    # check package-bundles created
-    tree -L  3 $(git rev-parse --show-toplevel)/build/
 
 ## Create package
     # switch to toplevel directory of repo
